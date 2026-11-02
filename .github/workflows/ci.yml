@@ -1,0 +1,53 @@
+name: CI
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python: ["3.9", "3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: pip install . pytest
+      - run: pytest -q
+
+  examples:
+    name: example reports (real bug passes, made-up report fails)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install .
+      - run: sh examples/make_repo.sh /tmp/tinyhttp
+      - name: real bug report -> exit 0
+        run: checkrefs examples/reports/real-bug.md -C /tmp/tinyhttp
+      - name: made-up report -> exit 1
+        run: |
+          set +e
+          checkrefs examples/reports/slop.md -C /tmp/tinyhttp --format markdown -o slop.md --github-summary
+          test $? = 1
+      - name: same report as a GitHub issue event
+        run: |
+          python - <<'PY'
+          import json
+          body = open("examples/reports/slop.md").read()
+          json.dump({"issue": {"number": 1, "title": "heap overflow", "body": body},
+                     "repository": {"full_name": "example/tinyhttp"}}, open("/tmp/event.json", "w"))
+          PY
+          set +e
+          checkrefs --event /tmp/event.json -C /tmp/tinyhttp --hide-ok
+          test $? = 1
+
+  install-script:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: CHECKREFS_REF=${{ github.sha }} sh install.sh
+      - run: ~/.local/bin/checkrefs --version || checkrefs --version

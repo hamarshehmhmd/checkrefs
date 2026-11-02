@@ -1,0 +1,47 @@
+name: checkrefs
+description: Check that the files, lines, functions, code quotes, versions and stack frames an issue or PR cites exist in this repo.
+author: Mohammad Hamarsheh
+branding:
+  icon: check-square
+  color: green
+inputs:
+  fail-on:
+    description: "Fail the job on wrong references (fail), on any doubtful ones (warn), or never (default)"
+    default: never
+  label:
+    description: "Label to add when references don't match the code (empty = no label). Needs issues: write."
+    default: ""
+  args:
+    description: Extra checkrefs arguments, e.g. "--project mytool"
+    default: ""
+outputs:
+  verdict:
+    description: grounded, partly-verified, ungrounded or nothing-to-check
+    value: ${{ steps.run.outputs.verdict }}
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+    - shell: bash
+      run: python -m pip install -q "${{ github.action_path }}"
+    - id: run
+      shell: bash
+      env:
+        FAIL_ON: ${{ inputs.fail-on }}
+        EXTRA: ${{ inputs.args }}
+      run: |
+        set +e
+        checkrefs --event "$GITHUB_EVENT_PATH" -C "$GITHUB_WORKSPACE" --format json -o "$RUNNER_TEMP/checkrefs.json" $EXTRA
+        checkrefs --event "$GITHUB_EVENT_PATH" -C "$GITHUB_WORKSPACE" --format markdown -o "$RUNNER_TEMP/checkrefs.md" --github-summary --fail-on "$FAIL_ON" $EXTRA
+        rc=$?
+        echo "verdict=$(python -c "import json,sys;print(json.load(open(sys.argv[1]))['verdict'])" "$RUNNER_TEMP/checkrefs.json")" >> "$GITHUB_OUTPUT"
+        exit $rc
+    - if: ${{ always() && inputs.label != '' && steps.run.outputs.verdict == 'ungrounded' }}
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        NUMBER: ${{ github.event.issue.number || github.event.pull_request.number }}
+        LABEL: ${{ inputs.label }}
+      run: gh issue edit "$NUMBER" --repo "$GITHUB_REPOSITORY" --add-label "$LABEL"
